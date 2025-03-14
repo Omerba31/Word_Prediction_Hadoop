@@ -13,7 +13,9 @@ import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Set;
 import java.util.HashSet;
+import java.util.Arrays;
 import java.util.Map;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -27,192 +29,162 @@ import com.amazonaws.services.s3.model.S3ObjectInputStream;
 
 public class Step1 {
 
-    public static class MapperClass1 extends Mapper<LongWritable, Text, Text, IntWritable> {
+    public static class Step1_Mapper extends Mapper<LongWritable, Text, Text, IntWritable> {
         private Text word = new Text();
-        private HashSet<String> stopWords = new HashSet<>();
+        public static final Set<String> STOP_WORDS = new HashSet<>(Arrays.asList(
+                "״", "׳", "של", "רב", "פי", "עם", "עליו", "עליהם", "על", "עד", "מן", "מכל", "מי", "מהם", "מה", "מ",
+                "למה", "לכל", "לי", "לו", "להיות", "לה", "לא", "כן", "כמה", "כלי", "כל", "כי", "יש", "ימים", "יותר",
+                "יד", "י", "זה", "ז", "ועל", "ומי", "ולא", "וכן", "וכל", "והיא", "והוא", "ואם", "ו", "הרבה", "הנה",
+                "היו", "היה", "היא", "הזה", "הוא", "דבר", "ד", "ג", "בני", "בכל", "בו", "בה", "בא", "את", "אשר",
+                "אם", "אלה", "אל", "אך", "איש", "אין", "אחת", "אחר", "אחד", "אז", "אותו", "־", "^", "?", ";", ":",
+                "1", ".", "-", "*", "\"", "!", "שלשה", "בעל", "פני", ")", "גדול", "שם", "עלי", "עולם", "מקום",
+                "לעולם", "לנו", "להם", "ישראל", "יודע", "זאת", "השמים", "הזאת", "הדברים", "הדבר", "הבית",
+                "האמת", "דברי", "במקום", "בהם", "אמרו", "אינם", "אחרי", "אותם", "אדם", "(", "חלק", "שני",
+                "שכל", "שאר", "ש", "ר", "פעמים", "נעשה", "ן", "ממנו", "מלא", "מזה", "ם", "לפי", "ל", "כמו",
+                "כבר", "כ", "זו", "ומה", "ולכל", "ובין", "ואין", "הן", "היתה", "הא", "ה", "בל", "בין", "בזה",
+                "ב", "אף", "אי", "אותה", "או", "אבל", "א"
+        ));
 
-        protected void setup(Context context) throws IOException, InterruptedException {
-            // Configure AWS client using instance profile credentials (recommended when
-            // running on AWS infrastructure)
-            AmazonS3 s3Client = AmazonS3ClientBuilder.standard()
-                    .withRegion("us-east-1") // Specify your bucket region
-                    .build();
-
-            String bucketName = "hashem-itbarach"; // Your S3 bucket name
-            String key = "heb-stopwords.txt"; // S3 object key for the stopwords file
-
-            try {
-                S3Object s3object = s3Client.getObject(bucketName, key);
-                try (S3ObjectInputStream inputStream = s3object.getObjectContent();
-                        BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        stopWords.add(line.trim());
-                    }
-                }
-            } catch (Exception e) {
-                // Handle exceptions properly in a production scenario
-                System.err.println("Exception while reading stopwords from S3: " + e.getMessage());
-                e.printStackTrace();
-            }
-        }
-
-        // ngram format from Google Books:
-        // ngram TAB year TAB match_count TAB page_count TAB volume_count NEWLINE
+        // ngram format: ngram \t year \t match_count \t page_count \t volume_count \n
         @Override
         public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
             String line = value.toString();
-            String[] fields = line.split("\t"); // Split by tab
+            String[] fields = line.split("\t");
 
             if (fields.length == 5) {
-                // Extract n-gram and count data
-                String ngram = fields[0]; // "w1 w2 w3"
+                String ngram = fields[0];
                 String[] words = ngram.split(" ");
                 for (String word : words) {
-                    if (stopWords.contains(word))
+                    if (STOP_WORDS.contains(word) || !word.matches("^[\\p{IsHebrew}]+$"))
                         return;
                 }
-                int matchCount = Integer.parseInt(fields[2]);
+                IntWritable count = new IntWritable(Integer.parseInt(fields[2]));
+                Text ngramText = new Text(ngram);
 
-                // Emit n-gram
-                word.set(ngram);
-                context.write(word, new IntWritable(matchCount));
+                context.write(ngramText, count);
             }
         }
 
     }
 
-    // yeled : 40 - send as it is
-    // yeled tov : 50 - search yeled and send yeled tov yeled
-    // yeled nehmad :90
-    // yeled tov halah : 60
-    // yeled nehmad halah : 70
+    public static class Step1_Reducer extends Reducer<Text, IntWritable, Text, Text> {
+        private HashMap<String, Integer> current_nGrams;
+        private String curr_1st;
 
-    public static class ReducerClass1 extends Reducer<Text, IntWritable, Text, Text> {
-        private HashMap<String, Integer> currentWordGrams;
-        private String currentFirstWord = null;
-        
-        private static enum Counters {
-            C0 // Define a custom counter
+        private enum Counters {
+            C0
         }
 
-
         @Override
-        public void reduce(Text key, Iterable<IntWritable> values, Context context)
-                throws IOException, InterruptedException {
+        public void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
             String keyString = key.toString().trim();
-            String[] words = keyString.split(" "); // Split the key by space
-            String firstWord = words[0];
+            String local_1st = Methods.getWord_key(keyString, 0);
 
-            // Write to log file
-            System.out.println("Working on key: " + keyString);
-
-            // Initialize or reset HashMap when first word changes
-            if (currentFirstWord == null || !currentFirstWord.equals(firstWord)) {
-                if (currentWordGrams != null) {
-                    System.out.println("Key has been changed from: " + currentFirstWord + " to: " + firstWord
-                            + ". Passing HashMap.");
-
-                    for (Map.Entry<String, Integer> entry : currentWordGrams.entrySet()) {
+            if (curr_1st == null || !curr_1st.equals(local_1st)) {
+                if (current_nGrams != null) {
+                    for (Map.Entry<String, Integer> entry : current_nGrams.entrySet()) {
                         String ngram = entry.getKey();
-                        System.out.println("Current n-gram in HashMap: " + ngram);
-                        String[] ngramWords = ngram.split(" ");
-                        int n = ngramWords.length;
-                        String w1 = ngramWords[0];
 
+                        String w1 = Methods.getWord_key(ngram, 0);
                         String sum = entry.getValue().toString();
-                        if (n == 1) {
-                            context.write(new Text(ngram), new Text(ngram + ":" + sum));
-                        } else if (n == 2) {
-                            Integer w1SumInteger = currentWordGrams.get(w1);
-                            String w1Sum = w1SumInteger != null ? w1SumInteger.toString() : "null";
-                            context.write(new Text(ngram), new Text(w1 + ":" + w1Sum + "\t" + ngram + ":" + sum));
-                        } else if (n == 3) {
-                            String w2 = ngramWords[1];
-                            Integer w1SumInteger = currentWordGrams.get(w1);
-                            String w1Sum = w1SumInteger != null ? w1SumInteger.toString() : "null";
-                            Integer w1w2SumInteger = currentWordGrams.get(w1 + " " + w2);
-                            String w1w2Sum = w1w2SumInteger != null ? w1w2SumInteger.toString() : "null";
-                            context.write(new Text(ngram), new Text(w1 + ":" + w1Sum + "\t" + w1 + " " + w2 + ":"
-                                    + w1w2Sum + "\t" + ngram + ":" + sum));
+
+                        Text newKey = new Text(ngram), newValue;
+
+                        Integer w1_count, w1w2_count;
+                        String w1Count, w1w2Count;
+
+                        switch (Methods.getKeyLength(ngram)) {
+                            case 1:
+                                // "w1" -> "w1:sum"
+                                newValue = new Text(ngram + ":" + sum);
+                                context.write(newKey, newValue);
+
+                                break;
+
+                            case 2:
+                                // "w1 w2" -> "w1:w1Count \t w1 w2:sum"
+                                w1_count = current_nGrams.get(w1);
+                                w1Count = w1_count != null ? w1_count.toString() : "null";
+
+                                newValue = new Text(w1 + ":" + w1Count + "\t" + ngram + ":" + sum);
+                                context.write(newKey, newValue);
+
+                                break;
+
+                            case 3:
+                                // "w1 w2 w3" -> "w1:w1Count \t w1 w2:w1w2Count \t w1 w2 w3:sum"
+                                String w2 = Methods.getWord_key(ngram, 1);
+                                w1_count = current_nGrams.get(w1);
+                                w1Count = w1_count != null ? w1_count.toString() : "null";
+
+                                w1w2_count = current_nGrams.get(w1 + " " + w2);
+                                w1w2Count = w1w2_count != null ? w1w2_count.toString() : "null";
+
+                                newValue = new Text(w1 + ":" + w1Count + "\t" + w1 + " " + w2 + ":" + w1w2Count + "\t" + ngram + ":" + sum);
+                                context.write(newKey, newValue);
+
+                                break;
                         }
                     }
                 }
-                currentFirstWord = firstWord;
-                currentWordGrams = new HashMap<>();
+                curr_1st = local_1st;
+                current_nGrams = new HashMap<>();
             }
 
-            // Sum up the counts for this n-gram
             int sum = 0;
-            for (IntWritable value : values) {
-                sum += value.get();
-            }
-            
+            for (IntWritable value : values) sum += value.get();
             context.getCounter(Counters.C0).increment(sum);
-
-            // Store in HashMap
-            currentWordGrams.put(keyString, sum);
-            System.out.println("Stored in HashMap: <" + keyString + " , " + sum + ">");
+            current_nGrams.put(keyString, sum);
         }
 
-        
+        //        public static void combine(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
+//            int sum = 0;
+//            for (IntWritable value : values) {
+//                sum += value.get();
+//            }
+//            context.write(key, new Text(String.valueOf(sum)));
+//        }
+
     }
 
-    public static class PartitionerClass1 extends Partitioner<Text, IntWritable> {
+    public static class Step1_Partitioner extends Partitioner<Text, IntWritable> {
         @Override
         public int getPartition(Text key, IntWritable value, int numPartitions) {
-            String ngram = key.toString();
-            String firstWord = ngram.split(" ")[0];
-            return Math.abs(firstWord.hashCode() % numPartitions);
+            return Math.abs(Methods.getWord_key(key.toString(), 0).hashCode() % numPartitions);
         }
     }
 
     public static void main(String[] args) throws Exception {
         System.out.println("[DEBUG] STEP 1 started!");
         Configuration conf = new Configuration();
+
         Job job = Job.getInstance(conf, "Step1 - Word Counting");
         job.setJarByClass(Step1.class);
-        job.setMapperClass(MapperClass1.class);
-        job.setPartitionerClass(PartitionerClass1.class);
-        // job.setSortComparatorClass(NgramComparator.class);
-        // job.setCombinerClass(ReducerClass1.class);
-        job.setReducerClass(ReducerClass1.class);
+        job.setMapperClass(Step1_Mapper.class);
+        job.setPartitionerClass(Step1_Partitioner.class);
+        job.setReducerClass(Step1_Reducer.class);
+        // job.setCombinerClass(Step1_Reducer.class);
+
         job.setMapOutputKeyClass(Text.class);
         job.setMapOutputValueClass(IntWritable.class);
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
 
-        // For n_grams S3 files.
-        // Note: This is English version and you should change the path to the relevant
-        // one
-        String bucketName = "hashem-itbarach"; // Your S3 bucket name
         job.setInputFormatClass(SequenceFileInputFormat.class);
         job.setOutputFormatClass(TextOutputFormat.class);
-        SequenceFileInputFormat.addInputPath(job,
-                new Path("s3://datasets.elasticmapreduce/ngrams/books/20090715/heb-all/1gram/data"));
-        SequenceFileInputFormat.addInputPath(job,
-                new Path("s3://datasets.elasticmapreduce/ngrams/books/20090715/heb-all/2gram/data"));
-        SequenceFileInputFormat.addInputPath(job,
-                new Path("s3://datasets.elasticmapreduce/ngrams/books/20090715/heb-all/3gram/data"));
-        TextOutputFormat.setOutputPath(job, new Path("s3://" + bucketName + "/output/step1"));
-        
+        SequenceFileInputFormat.addInputPath(job, Config.PATH_1_GRAM);
+        SequenceFileInputFormat.addInputPath(job, Config.PATH_2_GRAM);
+        SequenceFileInputFormat.addInputPath(job, Config.PATH_3_GRAM);
+        TextOutputFormat.setOutputPath(job, Config.OUTPUT_STEP_1);
+
         boolean success = job.waitForCompletion(true);
-        
+
         if (success) {
-            // Retrieve and save the counter value after job completion
-            long c0Value = job.getCounters()
-                            .findCounter(ReducerClass1.Counters.C0)
-                            .getValue();
-            System.out.println("Counter C0 Value: " + c0Value);
+            FileSystem fs = FileSystem.get(new URI("s3://" + Config.BUCKET_NAME), conf);
 
-            // Create an S3 path to save the counter value
-            String counterFilePath = "s3://" + bucketName + "/output/step1/counter_c0.txt";
-
-            // Write the counter value to the file in S3
-            FileSystem fs = FileSystem.get(new URI("s3://" + bucketName), conf);
-            Path counterPath = new Path(counterFilePath);
-            FSDataOutputStream out = fs.create(counterPath);
-            out.writeBytes("Counter C0 Value: " + c0Value + "\n");
+            long c0Value = job.getCounters().findCounter(Step1_Reducer.Counters.C0).getValue();
+            FSDataOutputStream out = fs.create(Config.PATH_C0);
+            out.writeBytes("C0 Value: " + c0Value + "\n");
             out.close();
         }
         System.exit(success ? 0 : 1);

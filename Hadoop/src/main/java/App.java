@@ -15,69 +15,71 @@ public class App {
     public static AmazonS3 S3;
     public static AmazonEC2 ec2;
     public static AmazonElasticMapReduce emr;
-    public static String bucketName = "hashem-itbarach";
-
     public static int numberOfInstances = 7;
 
-    public static void main(String[]args){
+    public static void main(String[] args) {
         credentialsProvider = new ProfileCredentialsProvider();
         System.out.println("[INFO] Connecting to aws");
+
         ec2 = AmazonEC2ClientBuilder.standard()
                 .withCredentials(credentialsProvider)
                 .withRegion("us-east-1")
                 .build();
+
         S3 = AmazonS3ClientBuilder.standard()
                 .withCredentials(credentialsProvider)
                 .withRegion("us-east-1")
                 .build();
+
         emr = AmazonElasticMapReduceClientBuilder.standard()
                 .withCredentials(credentialsProvider)
                 .withRegion("us-east-1")
                 .build();
-        System.out.println("list cluster");
-        System.out.println( emr.listClusters());
 
-        // Step 1
-        HadoopJarStepConfig firstStep = new HadoopJarStepConfig()
-                .withJar("s3://" + bucketName + "/jars/Step1.jar")
+        AmazonS3 s3Client = AmazonS3ClientBuilder.standard()
+                .withRegion(Config.REGION)
+                .build();
+
+        HadoopJarStepConfig Step1_jar = new HadoopJarStepConfig()
+                .withJar("s3://" + Config.BUCKET_NAME + "/jars/Step1.jar")
                 .withMainClass("Step1");
 
-        // Step 2
-        HadoopJarStepConfig secondStep = new HadoopJarStepConfig()
-                .withJar("s3://" + bucketName + "/jars/Step2.jar")
+        StepConfig Step1_Config = new StepConfig()
+                .withName("Step1")
+                .withHadoopJarStep(Step1_jar)
+                .withActionOnFailure("TERMINATE_JOB_FLOW");
+
+
+        HadoopJarStepConfig Step2_jar = new HadoopJarStepConfig()
+                .withJar("s3://" + Config.BUCKET_NAME + "/jars/Step2.jar")
                 .withMainClass("Step2");
 
-        //Step 3
-        HadoopJarStepConfig thirdStep = new HadoopJarStepConfig()
-                .withJar("s3://" + bucketName + "/jars/Step3.jar")
+        StepConfig Step2_Config = new StepConfig()
+                .withName("Step2")
+                .withHadoopJarStep(Step2_jar)
+                .withActionOnFailure("TERMINATE_JOB_FLOW");
+
+
+        HadoopJarStepConfig Step3_jar = new HadoopJarStepConfig()
+                .withJar("s3://" + Config.BUCKET_NAME + "/jars/Step3.jar")
                 .withMainClass("Step3");
-        //Step 4
-        HadoopJarStepConfig forthStep = new HadoopJarStepConfig()
-                .withJar("s3://" + bucketName + "/jars/Step4.jar")
+
+        StepConfig Step3_Config = new StepConfig()
+                .withName("Step3")
+                .withHadoopJarStep(Step3_jar)
+                .withActionOnFailure("TERMINATE_JOB_FLOW");
+
+
+        HadoopJarStepConfig Step4_jar = new HadoopJarStepConfig()
+                .withJar("s3://" + Config.BUCKET_NAME + "/jars/Step4.jar")
                 .withMainClass("Step4");
 
-
-
-        StepConfig stepConfig1 = new StepConfig()
-                .withName("Step1")
-                .withHadoopJarStep(firstStep)
-                .withActionOnFailure("TERMINATE_JOB_FLOW");
-
-        StepConfig stepConfig2 = new StepConfig()
-                .withName("Step2")
-                .withHadoopJarStep(secondStep)
-                .withActionOnFailure("TERMINATE_JOB_FLOW");
-
-        StepConfig stepConfig3 = new StepConfig()
-                .withName("Step3")
-                .withHadoopJarStep(thirdStep)
-                .withActionOnFailure("TERMINATE_JOB_FLOW");
-        
-        StepConfig stepConfig4 = new StepConfig()
+        StepConfig Step4_Config = new StepConfig()
                 .withName("Step4")
-                .withHadoopJarStep(forthStep)
+                .withHadoopJarStep(Step4_jar)
                 .withActionOnFailure("TERMINATE_JOB_FLOW");
-                
+
+
         //Job flow
         JobFlowInstancesConfig instances = new JobFlowInstancesConfig()
                 .withInstanceCount(numberOfInstances)
@@ -92,8 +94,8 @@ public class App {
         RunJobFlowRequest runFlowRequest = new RunJobFlowRequest()
                 .withName("Map reduce project")
                 .withInstances(instances)
-                .withSteps(stepConfig1, stepConfig2, stepConfig3, stepConfig4)
-                .withLogUri("s3://" + bucketName + "/logs/")
+                .withSteps(Step1_Config, Step2_Config, Step3_Config, Step4_Config)
+                .withLogUri(Config.LOGS)
                 .withServiceRole("EMR_DefaultRole")
                 .withJobFlowRole("EMR_EC2_DefaultRole")
                 .withReleaseLabel("emr-5.11.0");

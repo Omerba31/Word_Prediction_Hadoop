@@ -11,110 +11,83 @@ import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 
 import java.io.IOException;
 import java.util.LinkedList;
-import java.util.List;   
-
+import java.util.List;
+import java.util.Arrays;
 
 public class Step3 {
-    
-    public static class MapperClass3 extends Mapper<LongWritable, Text, Text, Text> {
-        //ngram format from Google Books:
-        //ngram TAB year TAB match_count TAB page_count TAB volume_count NEWLINE
+
+    public static class Step3_Mapper extends Mapper<LongWritable, Text, Text, Text> {
         @Override
         public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
-            
-            String[] fields = value.toString().split("\t"); //The key and all the values
-            String ngram = fields[0]; //The key
-            String[] ngramWords = ngram.split(" "); // Split by space
-            String valuesInString = "";
-            
-            if(ngramWords.length != 1){                
-                return;
-            }
 
-            for(int i = 1; i < fields.length; i++) {
-                if(i == fields.length - 1)
-                    valuesInString += fields[i];
-                else
-                    valuesInString += fields[i] + "\t";
-            }
+            String[] fields = value.toString().split("\t");
+            String ngram = fields[0];
+            String[] ngramWords = ngram.split(" ");
+
+            if (ngramWords.length != 1) return;
+            String valuesInString = String.join("\t", Arrays.copyOfRange(fields, 1, fields.length));
 
             context.write(new Text(ngram), new Text(valuesInString));
         }
-        
     }
 
 
-    public static class ReducerClass3 extends Reducer<Text, Text, Text, Text> {
+    public static class Step3_Reducer extends Reducer<Text, Text, Text, Text> {
         @Override
-        public void reduce(Text key, Iterable<Text> values, Context context) 
-                throws IOException, InterruptedException {
+        public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
 
-            String[] words = key.toString().split(" "); 
+            if (Methods.getKeyLength(key.toString()) != 1) return;
 
-            //Word length should be 1
-            if(words.length != 1){   
-                return;
-            }
-            
-             //Length is 1 as it should be
-            String original1GramValue = "null";
+            String value_1gram = "null";
             List<Text> notOriginalValues = new LinkedList<>();
-            for(Text value : values) {
-                if(value.toString().split("\t").length == 1) 
-                    original1GramValue = value.toString(); 
-                else
-                    notOriginalValues.add(value);
-            }   
 
-            StringBuilder newValueOf1gram = new StringBuilder();
-            for(Text value : notOriginalValues){
-                newValueOf1gram.setLength(0);
-                newValueOf1gram.append(original1GramValue + "\t" + value.toString());
-            
-                String[] threeGramWithNumberArray = value.toString().split("\t");
-                String threeGramWithNumber = "null";
-                if(threeGramWithNumberArray.length < 5)
-                    return;
-                else
-                    threeGramWithNumber = threeGramWithNumberArray[4];
-                    
-                int indexOfColon = threeGramWithNumber.lastIndexOf(":");
-                String threeGram = threeGramWithNumber.substring(0, indexOfColon);
-                context.write(new Text(threeGram) , new Text(newValueOf1gram.toString()));
-            }        
-        }        
-    }            
+            for (Text value : values) {
+                if (Methods.getValueLength(value.toString()) == 1)
+                    value_1gram = value.toString();
+                else notOriginalValues.add(value);
+            }
 
-    public static class PartitionerClass3 extends Partitioner<Text, Text> { //Get partition wasnt done today
-        @Override
-        public int getPartition(Text key, Text value, int numPartitions) {
-            String ngram = key.toString();
-            String firstWord = ngram.split(" ")[0];
-            return Math.abs(firstWord.hashCode() % numPartitions);
+            for (Text value : notOriginalValues) {
+                String valueStr = value.toString();
+                if (Methods.getValueLength(valueStr) < 5) return;
+
+                String value_3gram_4 = Methods.getWord_value(valueStr, 4);
+                String value_3gram = value_3gram_4.substring(0, value_3gram_4.lastIndexOf(":"));
+                Text newKey = new Text(value_3gram);
+                Text newValue = new Text(value_1gram + "\t" + valueStr);
+
+                context.write(newKey, newValue);
+            }
         }
     }
 
-     public static void main(String[] args) throws Exception {
+    public static class Step3_Partitioner extends Partitioner<Text, Text> { //Get partition wasnt done today
+        @Override
+        public int getPartition(Text key, Text value, int numPartitions) {
+            return Math.abs(Methods.getWord_key(key.toString(), 0).hashCode() % numPartitions);
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
         System.out.println("[DEBUG] STEP 3 started!");
-        String bucketName = "hashem-itbarach";
         Configuration conf = new Configuration();
         Job job = Job.getInstance(conf, "Step3 - Second Join");
         job.setJarByClass(Step3.class);
-        job.setMapperClass(MapperClass3.class);
-        job.setPartitionerClass(PartitionerClass3.class);
-        // job.setCombinerClass(ReducerClass3.class);
-        job.setReducerClass(ReducerClass3.class);
+
+        job.setMapperClass(Step3_Mapper.class);
+        job.setReducerClass(Step3_Reducer.class);
+        job.setPartitionerClass(Step3_Partitioner.class);
+
         job.setMapOutputKeyClass(Text.class);
         job.setMapOutputValueClass(Text.class);
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
 
-        // For n_grams S3 files.
-        // Note: This is English version and you should change the path to the relevant one
         job.setInputFormatClass(TextInputFormat.class);
         job.setOutputFormatClass(TextOutputFormat.class);
-        TextInputFormat.addInputPath(job, new Path("s3://" + bucketName + "/output/step2"));
-        TextOutputFormat.setOutputPath(job, new Path("s3://" + bucketName + "/output/step3"));
+        TextInputFormat.addInputPath(job, Config.OUTPUT_STEP_2);
+        TextOutputFormat.setOutputPath(job, Config.OUTPUT_STEP_3);
+
         System.exit(job.waitForCompletion(true) ? 0 : 1);
     }
 }
