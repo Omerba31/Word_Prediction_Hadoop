@@ -6,6 +6,8 @@ public class Config {
     public static final String REGION = "us-east-1";
     public static final String LOGS = "s3://" + BUCKET_NAME + "/logs";
 
+    public static final int NUM_MAP_TASKS = 50;
+
     public static final Path PATH_1_GRAM = new Path("s3://datasets.elasticmapreduce/ngrams/books/20090715/heb-all/1gram/data");
     public static final Path PATH_2_GRAM = new Path("s3://datasets.elasticmapreduce/ngrams/books/20090715/heb-all/2gram/data");
     public static final Path PATH_3_GRAM = new Path("s3://datasets.elasticmapreduce/ngrams/books/20090715/heb-all/3gram/data");

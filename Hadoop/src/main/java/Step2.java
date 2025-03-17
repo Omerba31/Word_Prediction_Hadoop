@@ -9,8 +9,9 @@ import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 
-import java.io.IOException;
 import java.util.LinkedList;
+import java.util.AbstractMap;
+import java.io.IOException;
 import java.util.List;
 import java.util.Arrays;
 
@@ -45,36 +46,21 @@ public class Step2 {
         @Override
         public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
 
-            if (Methods.getKeyLength(key.toString()) == 1) {
-                StringBuilder builder = new StringBuilder();
-                Integer numOfValues = 0;
+            switch (Methods.getKeyLength(key.toString())) {
+                case 1:
+                    AbstractMap.SimpleEntry<Text, Text> KV = Methods.processSingleWordKey(key, values);
+                    context.write(KV.getKey(), KV.getValue());
+                    break;
 
-                for (Text value : values) {
-                    String valueStr = value.toString();
-                    builder.append(valueStr);
-                    numOfValues++;
-                }
-                Text newValue = new Text(builder.toString());
-                context.write(key, newValue);
+                case 2:
+                    LinkedList<AbstractMap.SimpleEntry<Text, Text>> KVs = Methods.processTwoWordsKey(key, values);
+                    for (AbstractMap.SimpleEntry<Text, Text> kv : KVs)
+                        context.write(kv.getKey(), kv.getValue());
 
-            } else if (Methods.getKeyLength(key.toString()) == 2) {
-                String original2GramValue = "null";
-                List<Text> notOriginalValues = new LinkedList<>();
-                int numOfValues2 = 0;
+                    break;
 
-                for (Text value : values) {
-                    String valueStr = value.toString();
-                    if (value.toString().split("\t").length == 2) {
-                        original2GramValue = valueStr;
-                        numOfValues2++;
-                    } else
-                        notOriginalValues.add(value);
-                }
-
-                for (Text value : notOriginalValues) {
-                    String newValueOf2gram = original2GramValue + "\t" + value.toString();
-                    context.write(new Text(Methods.getWord_key(key.toString(), 1)), new Text(newValueOf2gram));
-                }
+                default:
+                    System.err.println("[ERROR] Invalid key length: " + key.toString());
             }
         }
     }

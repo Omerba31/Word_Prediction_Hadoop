@@ -1,0 +1,10 @@
+Step 1: WITHOUT COMBINER
+
+Map input records=459,942,034
+Map output records=174,369,498 (Number of Key-Value pairs)
+Map output bytes=4,034,022,858 - before compression
+
+Reduce Shuffle Bytes = 554,407,515 bytes (~554 MB) - actual bytes transferred to reducers
+
+Launched map tasks=71
+Total runtime: ~11 minutes 10 seconds

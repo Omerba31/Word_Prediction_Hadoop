@@ -10,7 +10,11 @@ import org.apache.hadoop.mapreduce.Partitioner;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.SequenceFileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
+import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
+import org.apache.hadoop.mapreduce.InputSplit;
+import org.apache.hadoop.mapreduce.JobContext;
 
+import java.util.List;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Set;
@@ -72,7 +76,7 @@ public class Step1 {
         private String curr_1st;
 
         private enum Counters {
-            C0
+            C0,
         }
 
         @Override
@@ -136,16 +140,16 @@ public class Step1 {
             context.getCounter(Counters.C0).increment(sum);
             current_nGrams.put(keyString, sum);
         }
-
-        //        public static void combine(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
+    }
+//    public static class Step1_Combiner extends Reducer<Text, IntWritable, Text, IntWritable> {
+//        public static void combine(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
 //            int sum = 0;
 //            for (IntWritable value : values) {
 //                sum += value.get();
 //            }
-//            context.write(key, new Text(String.valueOf(sum)));
+//            context.write(key, new IntWritable(sum));
 //        }
-
-    }
+//    }
 
     public static class Step1_Partitioner extends Partitioner<Text, IntWritable> {
         @Override
@@ -153,6 +157,7 @@ public class Step1 {
             return Math.abs(Methods.getWord_key(key.toString(), 0).hashCode() % numPartitions);
         }
     }
+
 
     public static void main(String[] args) throws Exception {
         System.out.println("[DEBUG] STEP 1 started!");
@@ -163,7 +168,7 @@ public class Step1 {
         job.setMapperClass(Step1_Mapper.class);
         job.setPartitionerClass(Step1_Partitioner.class);
         job.setReducerClass(Step1_Reducer.class);
-        // job.setCombinerClass(Step1_Reducer.class);
+//        job.setCombinerClass(Step1_Combiner.class);
 
         job.setMapOutputKeyClass(Text.class);
         job.setMapOutputValueClass(IntWritable.class);
@@ -175,6 +180,7 @@ public class Step1 {
         SequenceFileInputFormat.addInputPath(job, Config.PATH_1_GRAM);
         SequenceFileInputFormat.addInputPath(job, Config.PATH_2_GRAM);
         SequenceFileInputFormat.addInputPath(job, Config.PATH_3_GRAM);
+
         TextOutputFormat.setOutputPath(job, Config.OUTPUT_STEP_1);
 
         boolean success = job.waitForCompletion(true);
